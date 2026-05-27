@@ -64,6 +64,35 @@ enum WorktreeService {
         }
     }
 
+    /// `git -C <root> worktree remove <path>`, followed by an optional
+    /// `git -C <root> branch -D <branch>`.
+    static func remove(
+        in repoRoot: String,
+        path: String,
+        branch: String?,
+        deleteLocalBranch: Bool
+    ) throws {
+        let (_, removeStderr, removeCode) = try runGit(
+            ["-C", repoRoot, "worktree", "remove", path]
+        )
+        guard removeCode == 0 else {
+            throw WorktreeError.gitFailed(exitCode: removeCode, stderr: removeStderr)
+        }
+
+        guard deleteLocalBranch,
+              let branch,
+              !branch.isEmpty else {
+            return
+        }
+
+        let (_, branchStderr, branchCode) = try runGit(
+            ["-C", repoRoot, "branch", "-D", branch]
+        )
+        guard branchCode == 0 else {
+            throw WorktreeError.gitFailed(exitCode: branchCode, stderr: branchStderr)
+        }
+    }
+
     /// `git -C <root> branch --format=%(refname:short)` plus tags via `git tag`.
     /// Used to populate the "base ref" dropdown in the New Worktree sheet.
     static func refs(in repoRoot: String) throws -> [String] {

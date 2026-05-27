@@ -243,6 +243,35 @@ final class SidebarViewModel: ObservableObject {
         }
     }
 
+    func deleteWorkspace(
+        _ worktree: GitWorktree,
+        in project: SidebarProject,
+        deleteLocalBranch: Bool
+    ) async -> Result<Void, Error> {
+        do {
+            try WorktreeService.remove(
+                in: project.rootPath,
+                path: worktree.path,
+                branch: worktree.branch,
+                deleteLocalBranch: deleteLocalBranch
+            )
+
+            await MainActor.run {
+                self.unmarkManagedWorktree(path: worktree.path, projectID: project.id)
+                self.workspaceNames.removeValue(forKey: self.normalizedPath(worktree.path))
+                self.saveWorkspaceNames()
+                if self.selectedWorktreePath == self.normalizedPath(worktree.path) {
+                    self.selectedWorktreePath = nil
+                }
+                self.refresh(project)
+            }
+            return .success(())
+        } catch {
+            await MainActor.run { self.lastError = error.localizedDescription }
+            return .failure(error)
+        }
+    }
+
     private func normalizedPath(_ path: String) -> String {
         (path as NSString).standardizingPath
     }
@@ -257,6 +286,17 @@ final class SidebarViewModel: ObservableObject {
         var paths = managedWorktreePaths[projectID, default: []]
         paths.insert(normalizedPath(path))
         managedWorktreePaths[projectID] = paths
+        saveManagedWorktreePaths()
+    }
+
+    private func unmarkManagedWorktree(path: String, projectID: UUID) {
+        var paths = managedWorktreePaths[projectID, default: []]
+        paths.remove(normalizedPath(path))
+        if paths.isEmpty {
+            managedWorktreePaths.removeValue(forKey: projectID)
+        } else {
+            managedWorktreePaths[projectID] = paths
+        }
         saveManagedWorktreePaths()
     }
 }

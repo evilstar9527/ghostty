@@ -12,6 +12,7 @@ struct WorktreeSidebarView: View {
     @State private var showingProjectSheet: Bool = false
     @State private var newWorktreeFor: SidebarProject?
     @State private var renamingWorkspace: RenameWorkspaceRequest?
+    @State private var deletingWorkspace: DeleteWorkspaceRequest?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -31,6 +32,14 @@ struct WorktreeSidebarView: View {
             RenameWorkspaceSheet(
                 worktree: request.worktree,
                 initialName: request.initialName,
+                model: model
+            )
+        }
+        .sheet(item: $deletingWorkspace) { request in
+            DeleteWorkspaceSheet(
+                project: request.project,
+                worktree: request.worktree,
+                displayName: request.displayName,
                 model: model
             )
         }
@@ -94,7 +103,7 @@ struct WorktreeSidebarView: View {
                 }
             } else if let worktrees = model.worktrees[project.id], !worktrees.isEmpty {
                 ForEach(worktrees) { wt in
-                    worktreeRow(wt)
+                    worktreeRow(wt, project: project)
                 }
                 Button {
                     newWorktreeFor = project
@@ -125,7 +134,7 @@ struct WorktreeSidebarView: View {
         }
     }
 
-    private func worktreeRow(_ wt: GitWorktree) -> some View {
+    private func worktreeRow(_ wt: GitWorktree, project: SidebarProject) -> some View {
         let title = model.displayName(for: wt)
         let subtitle = model.secondaryLabel(for: wt)
         let isSelected = model.isSelected(wt)
@@ -172,6 +181,21 @@ struct WorktreeSidebarView: View {
             }
             .buttonStyle(.plain)
             .help("Rename workspace")
+
+            Button {
+                deletingWorkspace = DeleteWorkspaceRequest(
+                    project: project,
+                    worktree: wt,
+                    displayName: title
+                )
+            } label: {
+                Image(systemName: "trash")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(Color.secondary)
+                    .frame(width: 20, height: 20)
+            }
+            .buttonStyle(.plain)
+            .help("Delete workspace")
         }
         .padding(.vertical, 7)
         .padding(.horizontal, 8)
@@ -196,6 +220,13 @@ struct WorktreeSidebarView: View {
                 renamingWorkspace = RenameWorkspaceRequest(
                     worktree: wt,
                     initialName: title
+                )
+            }
+            Button("Delete Workspace…") {
+                deletingWorkspace = DeleteWorkspaceRequest(
+                    project: project,
+                    worktree: wt,
+                    displayName: title
                 )
             }
             Button("Open in New Tab") {
@@ -251,6 +282,14 @@ private struct RenameWorkspaceRequest: Identifiable {
     var id: String { worktree.path }
 }
 
+private struct DeleteWorkspaceRequest: Identifiable {
+    var project: SidebarProject
+    var worktree: GitWorktree
+    var displayName: String
+
+    var id: String { worktree.path }
+}
+
 private struct RenameWorkspaceSheet: View {
     let worktree: GitWorktree
     let initialName: String
@@ -293,5 +332,96 @@ private struct RenameWorkspaceSheet: View {
         }
         .padding(16)
         .frame(minWidth: 420)
+    }
+}
+
+private struct DeleteWorkspaceSheet: View {
+    let project: SidebarProject
+    let worktree: GitWorktree
+    let displayName: String
+    @ObservedObject var model: SidebarViewModel
+    @Environment(\.dismiss) private var dismiss
+
+    @State private var deleteLocalBranch: Bool = false
+    @State private var submitting: Bool = false
+    @State private var errorMessage: String?
+
+    private var canDeleteLocalBranch: Bool {
+        worktree.branch?.isEmpty == false
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("Delete Workspace")
+                .font(.headline)
+
+            VStack(alignment: .leading, spacing: 8) {
+                Text(displayName)
+                    .font(.system(size: 13, weight: .semibold))
+                Text(worktree.path)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+
+            Toggle("Delete local branch \(branchLabel)", isOn: $deleteLocalBranch)
+                .disabled(!canDeleteLocalBranch || submitting)
+                .onAppear {
+                    if !canDeleteLocalBranch {
+                        deleteLocalBranch = false
+                    }
+                }
+
+            if let errorMessage {
+                Text(errorMessage)
+                    .font(.caption)
+                    .foregroundStyle(.red)
+            }
+
+            HStack {
+                Spacer()
+                Button("Cancel") { dismiss() }
+                    .keyboardShortcut(.cancelAction)
+                    .disabled(submitting)
+                Button(submitting ? "Deleting…" : "Delete") {
+                    deleteWorkspace()
+                }
+                .keyboardShortcut(.defaultAction)
+                .disabled(submitting)
+            }
+        }
+        .padding(16)
+        .frame(minWidth: 440)
+    }
+
+    private var branchLabel: String {
+        guard let branch = worktree.branch, !branch.isEmpty else {
+            return ""
+        }
+        return "(\(branch))"
+    }
+
+    private func deleteWorkspace() {
+        submitting = true
+        errorMessage = nil
+        let shouldDeleteBranch = deleteLocalBranch && canDeleteLocalBranch
+
+        Task {
+            let result = await model.deleteWorkspace(
+                worktree,
+                in: project,
+                deleteLocalBranch: shouldDeleteBranch
+            )
+            await MainActor.run {
+                submitting = false
+                switch result {
+                case .success:
+                    dismiss()
+                case let .failure(error):
+                    errorMessage = error.localizedDescription
+                }
+            }
+        }
     }
 }
