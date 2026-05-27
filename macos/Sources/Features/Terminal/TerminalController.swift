@@ -621,6 +621,20 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
         switchToWorktreeTab(id: id, path: activeWorktreePath)
     }
 
+    override func renameWorktreeTab(id: UUID, title: String) {
+        guard let activeWorktreePath,
+              var tabs = worktreeTabGroups[activeWorktreePath],
+              let index = tabs.firstIndex(where: { $0.id == id }) else {
+            return
+        }
+
+        let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+
+        tabs[index].title = trimmed
+        worktreeTabGroups[activeWorktreePath] = tabs
+    }
+
     private func switchToWorktreeTab(id: UUID, path: String) {
         guard let tab = worktreeTabGroups[path]?.first(where: { $0.id == id }) else {
             return
