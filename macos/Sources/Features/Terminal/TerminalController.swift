@@ -69,6 +69,19 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
         return worktreeTabGroups[activeWorktreePath] ?? []
     }
 
+    private var allWorktreeSurfaceTrees: [SplitTree<Ghostty.SurfaceView>] {
+        worktreeTabGroups.values.flatMap { tabs in
+            tabs.map(\.surfaceTree)
+        }
+    }
+
+    private var hasSessionsNeedingCloseConfirmation: Bool {
+        surfaceTree.contains(where: { $0.needsConfirmQuit }) ||
+            allWorktreeSurfaceTrees.contains {
+                $0.contains(where: { $0.needsConfirmQuit })
+            }
+    }
+
     /// The notification cancellable for focused surface property changes.
     private var surfaceAppearanceCancellables: Set<AnyCancellable> = []
 
@@ -664,14 +677,42 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
         return false
     }
 
-    private func closeActiveWorktreeTab() -> Bool {
+    private func closeActiveWorktreeTabWithConfirmation(
+        messageText: String,
+        informativeText: String
+    ) -> Bool {
         guard activeWorktreePath != nil,
               activeWorktreeTabID != nil else {
             return false
         }
 
-        _ = closeActiveWorktreeTabAfterSurfaceClosed()
+        guard surfaceTree.contains(where: { $0.needsConfirmQuit }) else {
+            closeActiveWorktreeTabImmediately()
+            return true
+        }
+
+        confirmClose(
+            messageText: messageText,
+            informativeText: informativeText
+        ) {
+            self.closeActiveWorktreeTabImmediately()
+        }
         return true
+    }
+
+    private func closeActiveWorktreeTabImmediately() {
+        if !closeActiveWorktreeTabAfterSurfaceClosed() {
+            closeTabImmediately()
+        }
+    }
+
+    private func discardAllWorktreeTabs() {
+        worktreeTabGroups.removeAll()
+        selectedWorktreeTabIDs.removeAll()
+        worktreeCompletionCancellables.removeAll()
+        completedWorktreeNotificationTabs.removeAll()
+        setActiveWorktreePath(nil)
+        setActiveWorktreeTabID(nil)
     }
 
     private func focusWorktreeTab(_ tree: SplitTree<Ghostty.SurfaceView>) {
@@ -958,6 +999,7 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
             }
         }
 
+        discardAllWorktreeTabs()
         window.close()
     }
 
@@ -1066,12 +1108,14 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
                 // process them on later ticks so we can't just disable undo registration.
                 if let controller = window.windowController as? TerminalController {
                     controller.cancelPendingInitialPresentation()
+                    controller.discardAllWorktreeTabs()
                     controller.surfaceTree = .init()
                 }
 
                 window.close()
             }
         } else {
+            discardAllWorktreeTabs()
             window.close()
         }
     }
@@ -1192,8 +1236,7 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
         // needs quit confirmation. This lets us attach the confirmation to something
         // that is running.
         guard let confirmWindow = all
-            .first(where: { $0.surfaceTree.contains(where: { $0.needsConfirmQuit }) })?
-            .surfaceTree.first(where: { $0.needsConfirmQuit })?
+            .first(where: { $0.hasSessionsNeedingCloseConfirmation })?
             .window
         else {
             closeAllWindowsImmediately()
@@ -1416,10 +1459,6 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
     lazy private(set) var tabGroupCloseCoordinator = TabGroupCloseCoordinator()
 
     override func windowShouldClose(_ sender: NSWindow) -> Bool {
-        if closeActiveWorktreeTab() {
-            return false
-        }
-
         tabGroupCloseCoordinator.windowShouldClose(sender) { [weak self] scope in
             guard let self else { return }
             switch scope {
@@ -1516,7 +1555,10 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
     // MARK: First Responder
 
     @IBAction override func close(_ sender: Any) {
-        if closeActiveWorktreeTab() {
+        if closeActiveWorktreeTabWithConfirmation(
+            messageText: "Close Tab?",
+            informativeText: "The terminal still has a running process. If you close the tab the process will be killed."
+        ) {
             return
         }
 
@@ -1543,7 +1585,10 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
     }
 
     @IBAction func closeTab(_ sender: Any?) {
-        if closeActiveWorktreeTab() {
+        if closeActiveWorktreeTabWithConfirmation(
+            messageText: "Close Tab?",
+            informativeText: "The terminal still has a running process. If you close the tab the process will be killed."
+        ) {
             return
         }
 
@@ -1584,7 +1629,7 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
             }
 
             // Check if any surfaces require confirmation
-            return controller.surfaceTree.contains(where: { $0.needsConfirmQuit })
+            return controller.hasSessionsNeedingCloseConfirmation
         }) else {
             self.closeOtherTabsImmediately()
             return
@@ -1611,7 +1656,7 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
                 return false
             }
 
-            return controller.surfaceTree.contains(where: { $0.needsConfirmQuit })
+            return controller.hasSessionsNeedingCloseConfirmation
         }
 
         if !needsConfirm {
@@ -1633,10 +1678,6 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
     }
 
     @IBAction override func closeWindow(_ sender: Any?) {
-        if closeActiveWorktreeTab() {
-            return
-        }
-
         guard let window = window else { return }
 
         // We need to check all the windows in our tab group for confirmation
@@ -1645,7 +1686,7 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
         let windows: [NSWindow] = window.tabGroup?.windows ?? [window]
         guard let confirmController = windows
             .compactMap({ $0.windowController as? TerminalController })
-            .first(where: { $0.surfaceTree.contains(where: { $0.needsConfirmQuit }) })
+            .first(where: { $0.hasSessionsNeedingCloseConfirmation })
         else {
             closeWindowImmediately()
             return

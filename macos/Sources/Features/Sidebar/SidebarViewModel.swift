@@ -21,6 +21,17 @@ final class SidebarViewModel: ObservableObject {
     private let workspaceNamesDefaultsKey = "sidebar.workspaceNames.v1"
     private let managedWorktreePathsDefaultsKey = "sidebar.managedWorktreePaths.v1"
 
+    private enum WorkspaceError: LocalizedError {
+        case existingWorktreeNotFound(String)
+
+        var errorDescription: String? {
+            switch self {
+            case let .existingWorktreeNotFound(path):
+                return "No existing git worktree found at: \(path)"
+            }
+        }
+    }
+
     init() {
         load()
     }
@@ -243,13 +254,53 @@ final class SidebarViewModel: ObservableObject {
         }
     }
 
+    func addExistingWorkspace(
+        in project: SidebarProject,
+        path: String,
+        workspaceName: String?
+    ) async -> Result<Void, Error> {
+        do {
+            let target = normalizedPath(path)
+            let list = try WorktreeService.list(in: project.rootPath)
+            guard list.contains(where: { normalizedPath($0.path) == target }) else {
+                throw WorkspaceError.existingWorktreeNotFound(path)
+            }
+
+            let trimmedWorkspace = workspaceName?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            await MainActor.run {
+                self.markManagedWorktree(path: path, projectID: project.id)
+                if !trimmedWorkspace.isEmpty {
+                    self.workspaceNames[self.normalizedPath(path)] = trimmedWorkspace
+                    self.saveWorkspaceNames()
+                }
+                self.refresh(project)
+            }
+            return .success(())
+        } catch {
+            await MainActor.run { self.lastError = error.localizedDescription }
+            return .failure(error)
+        }
+    }
+
     func deleteWorkspace(
         _ worktree: GitWorktree,
         in project: SidebarProject,
         deleteLocalBranch: Bool
     ) async -> Result<Void, Error> {
+        if normalizedPath(worktree.path) == normalizedPath(project.rootPath) {
+            unmarkManagedWorktree(path: worktree.path, projectID: project.id)
+            workspaceNames.removeValue(forKey: normalizedPath(worktree.path))
+            saveWorkspaceNames()
+            if selectedWorktreePath == normalizedPath(worktree.path) {
+                selectedWorktreePath = nil
+            }
+            lastError = nil
+            refresh(project)
+            return .success(())
+        }
+
         do {
-            try WorktreeService.remove(
+            let removal = try WorktreeService.remove(
                 in: project.rootPath,
                 path: worktree.path,
                 branch: worktree.branch,
@@ -263,6 +314,7 @@ final class SidebarViewModel: ObservableObject {
                 if self.selectedWorktreePath == self.normalizedPath(worktree.path) {
                     self.selectedWorktreePath = nil
                 }
+                self.lastError = removal.branchDeletionWarning
                 self.refresh(project)
             }
             return .success(())

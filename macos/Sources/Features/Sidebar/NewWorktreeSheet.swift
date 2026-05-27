@@ -1,8 +1,8 @@
 import SwiftUI
 import AppKit
 
-/// Sheet that runs `git worktree add` for a project. Full form: base ref,
-/// new branch toggle, target path, plus a sane default path.
+/// Sheet that creates a workspace, either by registering the current project
+/// folder or by running `git worktree add`.
 struct NewWorktreeSheet: View {
     let project: SidebarProject
     @ObservedObject var model: SidebarViewModel
@@ -10,6 +10,7 @@ struct NewWorktreeSheet: View {
 
     @State private var path: String = ""
     @State private var ref: String = "HEAD"
+    @State private var useCurrentFolder: Bool = false
     @State private var createBranch: Bool = true
     @State private var workspaceName: String = ""
     @State private var newBranchName: String = ""
@@ -21,37 +22,53 @@ struct NewWorktreeSheet: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("New Worktree — \(project.name)")
+            Text("New Workspace — \(project.name)")
                 .font(.headline)
 
             Form {
                 TextField("Workspace name", text: $workspaceName)
                     .onChange(of: workspaceName) { _ in autofillPathIfNeeded() }
 
-                TextField("New branch name", text: $newBranchName)
-                    .onChange(of: newBranchName) { _ in autofillPathIfNeeded() }
-
-                Toggle("Create new branch (-b)", isOn: $createBranch)
-
-                HStack {
-                    Text("Base ref")
-                    if loadingRefs {
-                        ProgressView().controlSize(.small)
-                        Spacer()
-                    } else {
-                        Picker("", selection: $ref) {
-                            Text("HEAD").tag("HEAD")
-                            ForEach(availableRefs, id: \.self) { r in
-                                Text(r).tag(r)
-                            }
+                Toggle("Use current folder", isOn: $useCurrentFolder)
+                    .onChange(of: useCurrentFolder) { useCurrent in
+                        if useCurrent {
+                            createBranch = false
+                            path = project.rootPath
+                            pathWasEdited = true
+                        } else {
+                            pathWasEdited = false
+                            autofillPathIfNeeded()
                         }
-                        .labelsHidden()
+                    }
+
+                if !useCurrentFolder {
+                    TextField("New branch name", text: $newBranchName)
+                        .onChange(of: newBranchName) { _ in autofillPathIfNeeded() }
+
+                    Toggle("Create new branch (-b)", isOn: $createBranch)
+
+                    HStack {
+                        Text("Base ref")
+                        if loadingRefs {
+                            ProgressView().controlSize(.small)
+                            Spacer()
+                        } else {
+                            Picker("", selection: $ref) {
+                                Text("HEAD").tag("HEAD")
+                                ForEach(availableRefs, id: \.self) { r in
+                                    Text(r).tag(r)
+                                }
+                            }
+                            .labelsHidden()
+                        }
                     }
                 }
 
                 HStack {
                     TextField("Worktree path", text: pathBinding)
+                        .disabled(useCurrentFolder)
                     Button("Browse…") { pickPath() }
+                        .disabled(useCurrentFolder)
                 }
 
                 if let err = errorMessage {
@@ -65,7 +82,7 @@ struct NewWorktreeSheet: View {
                 Spacer()
                 Button("Cancel") { dismiss() }
                     .keyboardShortcut(.cancelAction)
-                Button(submitting ? "Creating…" : "Create") { submit() }
+                Button(submitButtonTitle) { submit() }
                     .keyboardShortcut(.defaultAction)
                     .disabled(!canSubmit)
             }
@@ -79,10 +96,18 @@ struct NewWorktreeSheet: View {
     private var canSubmit: Bool {
         guard !submitting else { return false }
         guard !path.trimmingCharacters(in: .whitespaces).isEmpty else { return false }
+        if useCurrentFolder { return true }
         if createBranch {
             return !newBranchName.trimmingCharacters(in: .whitespaces).isEmpty
         }
         return !ref.isEmpty
+    }
+
+    private var submitButtonTitle: String {
+        if submitting {
+            return useCurrentFolder ? "Adding…" : "Creating…"
+        }
+        return useCurrentFolder ? "Add" : "Create"
     }
 
     private func loadRefs() async {
@@ -95,6 +120,10 @@ struct NewWorktreeSheet: View {
     }
 
     private func autofillPathIfNeeded() {
+        if useCurrentFolder {
+            path = project.rootPath
+            return
+        }
         guard !pathWasEdited else { return }
         path = defaultWorktreePath()
     }
@@ -156,18 +185,28 @@ struct NewWorktreeSheet: View {
         let p = project
         let target = path
         let baseRef = ref
+        let useCurrent = useCurrentFolder
         let mkBranch = createBranch
         let bName = newBranchName
         let wName = workspaceName
         Task {
-            let result = await model.createWorktree(
-                in: p,
-                path: target,
-                ref: mkBranch ? "" : baseRef,
-                createBranch: mkBranch,
-                newBranchName: mkBranch ? bName : nil,
-                workspaceName: wName
-            )
+            let result: Result<Void, Error>
+            if useCurrent {
+                result = await model.addExistingWorkspace(
+                    in: p,
+                    path: p.rootPath,
+                    workspaceName: wName
+                )
+            } else {
+                result = await model.createWorktree(
+                    in: p,
+                    path: target,
+                    ref: baseRef,
+                    createBranch: mkBranch,
+                    newBranchName: mkBranch ? bName : nil,
+                    workspaceName: wName
+                )
+            }
             await MainActor.run {
                 submitting = false
                 switch result {

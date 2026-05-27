@@ -22,6 +22,10 @@ enum WorktreeService {
         }
     }
 
+    struct RemovalResult {
+        var branchDeletionWarning: String?
+    }
+
     /// `git -C <root> worktree list --porcelain` parser.
     static func list(in repoRoot: String) throws -> [GitWorktree] {
         let (stdout, stderr, code) = try runGit(
@@ -71,7 +75,7 @@ enum WorktreeService {
         path: String,
         branch: String?,
         deleteLocalBranch: Bool
-    ) throws {
+    ) throws -> RemovalResult {
         let (_, removeStderr, removeCode) = try runGit(
             ["-C", repoRoot, "worktree", "remove", path]
         )
@@ -82,15 +86,19 @@ enum WorktreeService {
         guard deleteLocalBranch,
               let branch,
               !branch.isEmpty else {
-            return
+            return .init()
         }
 
         let (_, branchStderr, branchCode) = try runGit(
             ["-C", repoRoot, "branch", "-D", branch]
         )
         guard branchCode == 0 else {
-            throw WorktreeError.gitFailed(exitCode: branchCode, stderr: branchStderr)
+            return .init(
+                branchDeletionWarning: "Workspace deleted, but branch deletion failed: git exited with \(branchCode): \(branchStderr)"
+            )
         }
+
+        return .init()
     }
 
     /// `git -C <root> branch --format=%(refname:short)` plus tags via `git tag`.
@@ -118,10 +126,46 @@ enum WorktreeService {
         p.standardOutput = out
         p.standardError = err
         try p.run()
+
+        let stdout = DataBox()
+        let stderr = DataBox()
+        let readers = DispatchGroup()
+
+        readers.enter()
+        DispatchQueue.global(qos: .utility).async {
+            stdout.data = out.fileHandleForReading.readDataToEndOfFile()
+            readers.leave()
+        }
+
+        readers.enter()
+        DispatchQueue.global(qos: .utility).async {
+            stderr.data = err.fileHandleForReading.readDataToEndOfFile()
+            readers.leave()
+        }
+
         p.waitUntilExit()
-        let so = String(data: out.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
-        let se = String(data: err.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+        readers.wait()
+        let so = String(data: stdout.data, encoding: .utf8) ?? ""
+        let se = String(data: stderr.data, encoding: .utf8) ?? ""
         return (so, se, p.terminationStatus)
+    }
+
+    private final class DataBox: @unchecked Sendable {
+        private let lock = NSLock()
+        private var storage = Data()
+
+        var data: Data {
+            get {
+                lock.lock()
+                defer { lock.unlock() }
+                return storage
+            }
+            set {
+                lock.lock()
+                defer { lock.unlock() }
+                storage = newValue
+            }
+        }
     }
 
     /// Porcelain format: each worktree is a block separated by a blank line.
