@@ -29,4 +29,83 @@ def main [
         $"SYMROOT=($build_dir)"
         ...$skip_testing
         $action)
+
+    if $env.LAST_EXIT_CODE != 0 {
+        exit $env.LAST_EXIT_CODE
+    }
+
+    if $action == "build" and $scheme == "Ghostty" {
+        resign-ghostty-app $build_dir $configuration
+    }
+}
+
+def resign-ghostty-app [
+    build_dir: path
+    configuration: string
+] {
+    let app_dir = ($build_dir | path join $configuration)
+    let ghostty_plus_app = ($app_dir | path join "Ghostty++.app")
+    let ghostty_app = ($app_dir | path join "Ghostty.app")
+    let app = if ($ghostty_plus_app | path exists) {
+        $ghostty_plus_app
+    } else {
+        $ghostty_app
+    }
+
+    if not ($app | path exists) {
+        return
+    }
+
+    let entitlements_file = match $configuration {
+        "Debug" => "GhosttyDebug.entitlements",
+        "Release" => "Ghostty.entitlements",
+        "ReleaseLocal" => "GhosttyReleaseLocal.entitlements",
+        _ => null,
+    }
+
+    if $entitlements_file == null {
+        return
+    }
+
+    let nested_code = [
+        ($app | path join "Contents/Frameworks/Sparkle.framework/Versions/B/XPCServices/Downloader.xpc"),
+        ($app | path join "Contents/Frameworks/Sparkle.framework/Versions/B/XPCServices/Installer.xpc"),
+        ($app | path join "Contents/Frameworks/Sparkle.framework/Versions/B/Autoupdate"),
+        ($app | path join "Contents/Frameworks/Sparkle.framework/Versions/B/Updater.app"),
+        ($app | path join "Contents/Frameworks/Sparkle.framework"),
+        ($app | path join "Contents/PlugIns/DockTilePlugin.plugin"),
+    ]
+
+    for code in $nested_code {
+        if ($code | path exists) {
+            ^codesign --force --sign - --options runtime $code
+
+            if $env.LAST_EXIT_CODE != 0 {
+                exit $env.LAST_EXIT_CODE
+            }
+        }
+    }
+
+    let entitlements = ($env.FILE_PWD | path join $entitlements_file)
+
+    ^codesign --force --sign - --options runtime --entitlements $entitlements $app
+
+    if $env.LAST_EXIT_CODE != 0 {
+        exit $env.LAST_EXIT_CODE
+    }
+
+    ^codesign --verify --deep --strict --verbose=2 $app
+
+    if $env.LAST_EXIT_CODE != 0 {
+        exit $env.LAST_EXIT_CODE
+    }
+
+    let result = (^codesign -d --entitlements - $app | complete)
+    let output = $"($result.stdout)($result.stderr)"
+
+    if not ($output | str contains "com.apple.security.cs.disable-library-validation") {
+        error make {
+            msg: $"codesign did not apply com.apple.security.cs.disable-library-validation to ($app)"
+        }
+    }
 }
