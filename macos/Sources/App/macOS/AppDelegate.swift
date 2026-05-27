@@ -879,6 +879,11 @@ class AppDelegate: NSObject,
         didReceive: UNNotificationResponse,
         withCompletionHandler: () -> Void
     ) {
+        if handleWorktreeUserNotification(response: didReceive) {
+            withCompletionHandler()
+            return
+        }
+
         ghostty.handleUserNotification(response: didReceive)
         withCompletionHandler()
     }
@@ -888,9 +893,36 @@ class AppDelegate: NSObject,
         willPresent: UNNotification,
         withCompletionHandler: (UNNotificationPresentationOptions) -> Void
     ) {
+        if willPresent.request.content.userInfo["worktreeTab"] != nil {
+            withCompletionHandler([.banner, .sound])
+            return
+        }
+
         let shouldPresent = ghostty.shouldPresentNotification(notification: willPresent)
         let options: UNNotificationPresentationOptions = shouldPresent ? [.banner, .sound] : []
         withCompletionHandler(options)
+    }
+
+    private func handleWorktreeUserNotification(response: UNNotificationResponse) -> Bool {
+        let userInfo = response.notification.request.content.userInfo
+        guard let tabIDString = userInfo["worktreeTab"] as? String,
+              let tabID = UUID(uuidString: tabIDString) else {
+            return false
+        }
+
+        switch response.actionIdentifier {
+        case UNNotificationDefaultActionIdentifier, Ghostty.userNotificationActionShow:
+            guard let windowID = userInfo["worktreeWindow"] as? Int else { return true }
+            _ = TerminalController.showWorktreeTab(windowID: windowID, tabID: tabID)
+        case UNNotificationDismissActionIdentifier:
+            break
+        default:
+            break
+        }
+
+        UNUserNotificationCenter.current()
+            .removeDeliveredNotifications(withIdentifiers: [response.notification.request.identifier])
+        return true
     }
 
     // MARK: - GhosttyAppDelegate
