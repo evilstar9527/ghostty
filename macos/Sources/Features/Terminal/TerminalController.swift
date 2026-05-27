@@ -2,6 +2,7 @@ import Foundation
 import Cocoa
 import SwiftUI
 import Combine
+import UserNotifications
 import GhosttyKit
 
 /// A classic, tabbed terminal experience.
@@ -58,6 +59,29 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
     /// The configuration derived from the Ghostty config so we don't need to rely on references.
     private(set) var derivedConfig: DerivedConfig
 
+    @Published private var worktreeTabGroups: [String: [WorktreeTerminalTab]] = [:]
+    private var selectedWorktreeTabIDs: [String: UUID] = [:]
+    private var worktreeCompletionCancellables: [UUID: AnyCancellable] = [:]
+    private var completedWorktreeNotificationTabs: Set<UUID> = []
+
+    override var activeWorktreeTabs: [WorktreeTerminalTab] {
+        guard let activeWorktreePath else { return [] }
+        return worktreeTabGroups[activeWorktreePath] ?? []
+    }
+
+    private var allWorktreeSurfaceTrees: [SplitTree<Ghostty.SurfaceView>] {
+        worktreeTabGroups.values.flatMap { tabs in
+            tabs.map(\.surfaceTree)
+        }
+    }
+
+    private var hasSessionsNeedingCloseConfirmation: Bool {
+        surfaceTree.contains(where: { $0.needsConfirmQuit }) ||
+            allWorktreeSurfaceTrees.contains {
+                $0.contains(where: { $0.needsConfirmQuit })
+            }
+    }
+
     /// The notification cancellable for focused surface property changes.
     private var surfaceAppearanceCancellables: Set<AnyCancellable> = []
 
@@ -77,6 +101,10 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
         self.derivedConfig = DerivedConfig(ghostty.config)
 
         super.init(ghostty, baseConfig: base, surfaceTree: tree)
+
+        // Default the worktree sidebar to visible for regular terminal windows.
+        // Quick Terminal opts out by leaving the base class default of false.
+        self.sidebarVisible = true
 
         // Setup our notifications for behaviors
         let center = NotificationCenter.default
@@ -169,7 +197,12 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
     // MARK: Base Controller Overrides
 
     override func surfaceTreeDidChange(from: SplitTree<Ghostty.SurfaceView>, to: SplitTree<Ghostty.SurfaceView>) {
+        if to.isEmpty, closeActiveWorktreeTabAfterSurfaceClosed() {
+            return
+        }
+
         super.surfaceTreeDidChange(from: from, to: to)
+        updateActiveWorktreeTabTree(to)
 
         // Whenever our surface tree changes in any way (new split, close split, etc.)
         // we want to invalidate our state.
@@ -195,6 +228,9 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
         // We have a special case if our tree is empty to close our tab immediately.
         // This makes it so that undo is handled properly.
         if newTree.isEmpty {
+            if closeActiveWorktreeTabAfterSurfaceClosed() {
+                return
+            }
             closeTabImmediately()
             return
         }
@@ -529,6 +565,258 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
         return controller
     }
 
+    override func selectWorktree(path: String) -> Bool {
+        let normalizedPath = Self.normalizedWorktreePath(path)
+        setActiveWorktreePath(normalizedPath)
+
+        guard let tabs = worktreeTabGroups[normalizedPath],
+              !tabs.isEmpty else {
+            setActiveWorktreeTabID(nil)
+            return false
+        }
+
+        let targetID = selectedWorktreeTabIDs[normalizedPath].flatMap { id in
+            tabs.contains(where: { $0.id == id }) ? id : nil
+        } ?? tabs[0].id
+        switchToWorktreeTab(id: targetID, path: normalizedPath)
+        return true
+    }
+
+    override func openWorktreeTab(path: String, title: String, initialInput: String?) {
+        let normalizedPath = Self.normalizedWorktreePath(path)
+        guard let ghosttyApp = ghostty.app else { return }
+
+        var config = Ghostty.SurfaceConfiguration()
+        config.workingDirectory = normalizedPath
+        config.context = GHOSTTY_SURFACE_CONTEXT_TAB
+        if let initialInput, !initialInput.isEmpty {
+            config.initialInput = "\(initialInput)\n"
+        }
+
+        let surfaceView = Ghostty.SurfaceView(ghosttyApp, baseConfig: config)
+        let tree = SplitTree<Ghostty.SurfaceView>(view: surfaceView)
+        let agentName = Self.agentName(for: title, initialInput: initialInput)
+        let tab = WorktreeTerminalTab(
+            id: UUID(),
+            title: title,
+            path: normalizedPath,
+            surfaceTree: tree,
+            agentName: agentName
+        )
+
+        var tabs = worktreeTabGroups[normalizedPath] ?? []
+        tabs.append(tab)
+        worktreeTabGroups[normalizedPath] = tabs
+
+        setActiveWorktreePath(normalizedPath)
+        selectedWorktreeTabIDs[normalizedPath] = tab.id
+        setActiveWorktreeTabID(tab.id)
+        surfaceTree = tree
+        observeWorktreeCompletion(for: tab, surfaceView: surfaceView)
+        focusWorktreeTab(tree)
+    }
+
+    override func selectWorktreeTab(id: UUID) {
+        guard let activeWorktreePath else { return }
+        switchToWorktreeTab(id: id, path: activeWorktreePath)
+    }
+
+    private func switchToWorktreeTab(id: UUID, path: String) {
+        guard let tab = worktreeTabGroups[path]?.first(where: { $0.id == id }) else {
+            return
+        }
+
+        setActiveWorktreePath(path)
+        selectedWorktreeTabIDs[path] = id
+        setActiveWorktreeTabID(id)
+        surfaceTree = tab.surfaceTree
+        focusWorktreeTab(tab.surfaceTree)
+    }
+
+    private func updateActiveWorktreeTabTree(_ tree: SplitTree<Ghostty.SurfaceView>) {
+        guard let activeWorktreePath,
+              let activeWorktreeTabID,
+              var tabs = worktreeTabGroups[activeWorktreePath],
+              let index = tabs.firstIndex(where: { $0.id == activeWorktreeTabID }) else {
+            return
+        }
+
+        tabs[index].surfaceTree = tree
+        worktreeTabGroups[activeWorktreePath] = tabs
+    }
+
+    private func closeActiveWorktreeTabAfterSurfaceClosed() -> Bool {
+        guard let activeWorktreePath,
+              let activeWorktreeTabID,
+              var tabs = worktreeTabGroups[activeWorktreePath],
+              let index = tabs.firstIndex(where: { $0.id == activeWorktreeTabID }) else {
+            return false
+        }
+
+        tabs.remove(at: index)
+        worktreeCompletionCancellables.removeValue(forKey: activeWorktreeTabID)
+        completedWorktreeNotificationTabs.remove(activeWorktreeTabID)
+        if !tabs.isEmpty {
+            worktreeTabGroups[activeWorktreePath] = tabs
+            let nextIndex = min(index, tabs.count - 1)
+            switchToWorktreeTab(id: tabs[nextIndex].id, path: activeWorktreePath)
+            return true
+        }
+
+        worktreeTabGroups.removeValue(forKey: activeWorktreePath)
+        selectedWorktreeTabIDs.removeValue(forKey: activeWorktreePath)
+
+        if let fallbackPath = worktreeTabGroups.keys.sorted().first,
+           let fallbackTab = worktreeTabGroups[fallbackPath]?.first {
+            switchToWorktreeTab(id: fallbackTab.id, path: fallbackPath)
+            return true
+        }
+
+        setActiveWorktreePath(nil)
+        setActiveWorktreeTabID(nil)
+        return false
+    }
+
+    private func closeActiveWorktreeTabWithConfirmation(
+        messageText: String,
+        informativeText: String
+    ) -> Bool {
+        guard activeWorktreePath != nil,
+              activeWorktreeTabID != nil else {
+            return false
+        }
+
+        guard surfaceTree.contains(where: { $0.needsConfirmQuit }) else {
+            closeActiveWorktreeTabImmediately()
+            return true
+        }
+
+        confirmClose(
+            messageText: messageText,
+            informativeText: informativeText
+        ) {
+            self.closeActiveWorktreeTabImmediately()
+        }
+        return true
+    }
+
+    private func closeActiveWorktreeTabImmediately() {
+        if !closeActiveWorktreeTabAfterSurfaceClosed() {
+            closeTabImmediately()
+        }
+    }
+
+    private func discardAllWorktreeTabs() {
+        worktreeTabGroups.removeAll()
+        selectedWorktreeTabIDs.removeAll()
+        worktreeCompletionCancellables.removeAll()
+        completedWorktreeNotificationTabs.removeAll()
+        setActiveWorktreePath(nil)
+        setActiveWorktreeTabID(nil)
+    }
+
+    private func focusWorktreeTab(_ tree: SplitTree<Ghostty.SurfaceView>) {
+        guard let focus = tree.root?.leftmostLeaf() else { return }
+        DispatchQueue.main.async { [weak self] in
+            Ghostty.moveFocus(to: focus, from: self?.focusedSurface)
+        }
+    }
+
+    private static func normalizedWorktreePath(_ path: String) -> String {
+        URL(fileURLWithPath: path)
+            .standardizedFileURL
+            .path
+    }
+
+    @discardableResult
+    static func showWorktreeTab(windowID: Int, tabID: UUID) -> Bool {
+        guard let controller = all.first(where: {
+            $0.window?.windowNumber == windowID
+        }) else {
+            return false
+        }
+
+        return controller.showWorktreeTab(id: tabID)
+    }
+
+    private func showWorktreeTab(id: UUID) -> Bool {
+        for (path, tabs) in worktreeTabGroups {
+            guard tabs.contains(where: { $0.id == id }) else { continue }
+            switchToWorktreeTab(id: id, path: path)
+            window?.makeKeyAndOrderFront(nil)
+            NSApp.activate(ignoringOtherApps: true)
+            return true
+        }
+
+        return false
+    }
+
+    private func observeWorktreeCompletion(for tab: WorktreeTerminalTab, surfaceView: Ghostty.SurfaceView) {
+        guard tab.agentName != nil else { return }
+
+        let launchedAt = Date()
+        worktreeCompletionCancellables[tab.id] = Timer.publish(every: 2, on: .main, in: .common)
+            .autoconnect()
+            .sink { [weak self, weak surfaceView] _ in
+                guard let self, let surfaceView else { return }
+                guard Date().timeIntervalSince(launchedAt) > 2 else { return }
+                guard surfaceView.processExited else { return }
+                self.notifyWorktreeCompletion(for: tab)
+                self.worktreeCompletionCancellables.removeValue(forKey: tab.id)
+            }
+    }
+
+    private func notifyWorktreeCompletion(for tab: WorktreeTerminalTab) {
+        guard completedWorktreeNotificationTabs.insert(tab.id).inserted else { return }
+        guard let windowID = window?.windowNumber else { return }
+
+        let center = UNUserNotificationCenter.current()
+        center.requestAuthorization(options: [.alert, .sound]) { [weak self] _, error in
+            if let error {
+                AppDelegate.logger.error("Error while requesting notification authorization: \(error)")
+                return
+            }
+
+            center.getNotificationSettings { settings in
+                guard settings.authorizationStatus == .authorized else { return }
+                self?.scheduleWorktreeCompletionNotification(for: tab, windowID: windowID)
+            }
+        }
+    }
+
+    private func scheduleWorktreeCompletionNotification(for tab: WorktreeTerminalTab, windowID: Int) {
+        let agentName = tab.agentName ?? tab.title
+        let content = UNMutableNotificationContent()
+        content.title = "\(agentName) finished"
+        content.subtitle = (tab.path as NSString).lastPathComponent
+        content.body = "Click to return to this session."
+        content.sound = .default
+        content.categoryIdentifier = Ghostty.userNotificationCategory
+        content.userInfo = [
+            "worktreeTab": tab.id.uuidString,
+            "worktreeWindow": windowID,
+            "requireFocus": false,
+        ]
+
+        let request = UNNotificationRequest(
+            identifier: "worktree-\(tab.id.uuidString)",
+            content: content,
+            trigger: nil
+        )
+        UNUserNotificationCenter.current().add(request) { error in
+            if let error {
+                AppDelegate.logger.error("Error scheduling worktree notification: \(error)")
+            }
+        }
+    }
+
+    private static func agentName(for title: String, initialInput: String?) -> String? {
+        let text = "\(title) \(initialInput ?? "")".lowercased()
+        if text.contains("codex") { return "codex" }
+        if text.contains("claude") { return "claude" }
+        return nil
+    }
+
     // MARK: - Methods
 
     @objc private func ghosttyConfigDidChange(_ notification: Notification) {
@@ -711,6 +999,7 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
             }
         }
 
+        discardAllWorktreeTabs()
         window.close()
     }
 
@@ -819,12 +1108,14 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
                 // process them on later ticks so we can't just disable undo registration.
                 if let controller = window.windowController as? TerminalController {
                     controller.cancelPendingInitialPresentation()
+                    controller.discardAllWorktreeTabs()
                     controller.surfaceTree = .init()
                 }
 
                 window.close()
             }
         } else {
+            discardAllWorktreeTabs()
             window.close()
         }
     }
@@ -945,8 +1236,7 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
         // needs quit confirmation. This lets us attach the confirmation to something
         // that is running.
         guard let confirmWindow = all
-            .first(where: { $0.surfaceTree.contains(where: { $0.needsConfirmQuit }) })?
-            .surfaceTree.first(where: { $0.needsConfirmQuit })?
+            .first(where: { $0.hasSessionsNeedingCloseConfirmation })?
             .window
         else {
             closeAllWindowsImmediately()
@@ -1264,17 +1554,44 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
 
     // MARK: First Responder
 
+    @IBAction override func close(_ sender: Any) {
+        if closeActiveWorktreeTabWithConfirmation(
+            messageText: "Close Tab?",
+            informativeText: "The terminal still has a running process. If you close the tab the process will be killed."
+        ) {
+            return
+        }
+
+        super.close(sender)
+    }
+
     @IBAction func newWindow(_ sender: Any?) {
         guard let surface = focusedSurface?.surface else { return }
         ghostty.newWindow(surface: surface)
     }
 
     @IBAction func newTab(_ sender: Any?) {
+        if let activeWorktreePath {
+            openWorktreeTab(
+                path: activeWorktreePath,
+                title: "terminal",
+                initialInput: nil
+            )
+            return
+        }
+
         guard let surface = focusedSurface?.surface else { return }
         ghostty.newTab(surface: surface)
     }
 
     @IBAction func closeTab(_ sender: Any?) {
+        if closeActiveWorktreeTabWithConfirmation(
+            messageText: "Close Tab?",
+            informativeText: "The terminal still has a running process. If you close the tab the process will be killed."
+        ) {
+            return
+        }
+
         guard let window = window else { return }
         guard window.tabGroup?.windows.count ?? 0 > 1 else {
             closeWindow(sender)
@@ -1312,7 +1629,7 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
             }
 
             // Check if any surfaces require confirmation
-            return controller.surfaceTree.contains(where: { $0.needsConfirmQuit })
+            return controller.hasSessionsNeedingCloseConfirmation
         }) else {
             self.closeOtherTabsImmediately()
             return
@@ -1339,7 +1656,7 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
                 return false
             }
 
-            return controller.surfaceTree.contains(where: { $0.needsConfirmQuit })
+            return controller.hasSessionsNeedingCloseConfirmation
         }
 
         if !needsConfirm {
@@ -1369,7 +1686,7 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
         let windows: [NSWindow] = window.tabGroup?.windows ?? [window]
         guard let confirmController = windows
             .compactMap({ $0.windowController as? TerminalController })
-            .first(where: { $0.surfaceTree.contains(where: { $0.needsConfirmQuit }) })
+            .first(where: { $0.hasSessionsNeedingCloseConfirmation })
         else {
             closeWindowImmediately()
             return
@@ -1394,6 +1711,12 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
         guard let surface = focusedSurface?.surface else { return }
         ghostty.toggleTerminalInspector(surface: surface)
     }
+
+    @objc @IBAction func toggleWorktreeSidebar(_ sender: Any?) {
+        sidebarVisible.toggle()
+    }
+
+    override var sidebarSupported: Bool { true }
 
     // MARK: - TerminalViewDelegate
 

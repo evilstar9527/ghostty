@@ -486,7 +486,7 @@ class AppDelegate: NSObject,
             // may want to show this as a sheet on the focused window (especially if we're
             // opening a tab). I'm not sure.
             let alert = NSAlert()
-            alert.messageText = "Allow Ghostty to execute \"\(filename)\"?"
+            alert.messageText = "Allow Ghostty++ to execute \"\(filename)\"?"
             alert.addButton(withTitle: "Allow")
             alert.addButton(withTitle: "Cancel")
             alert.alertStyle = .warning
@@ -879,6 +879,11 @@ class AppDelegate: NSObject,
         didReceive: UNNotificationResponse,
         withCompletionHandler: () -> Void
     ) {
+        if handleWorktreeUserNotification(response: didReceive) {
+            withCompletionHandler()
+            return
+        }
+
         ghostty.handleUserNotification(response: didReceive)
         withCompletionHandler()
     }
@@ -888,9 +893,36 @@ class AppDelegate: NSObject,
         willPresent: UNNotification,
         withCompletionHandler: (UNNotificationPresentationOptions) -> Void
     ) {
+        if willPresent.request.content.userInfo["worktreeTab"] != nil {
+            withCompletionHandler([.banner, .sound])
+            return
+        }
+
         let shouldPresent = ghostty.shouldPresentNotification(notification: willPresent)
         let options: UNNotificationPresentationOptions = shouldPresent ? [.banner, .sound] : []
         withCompletionHandler(options)
+    }
+
+    private func handleWorktreeUserNotification(response: UNNotificationResponse) -> Bool {
+        let userInfo = response.notification.request.content.userInfo
+        guard let tabIDString = userInfo["worktreeTab"] as? String,
+              let tabID = UUID(uuidString: tabIDString) else {
+            return false
+        }
+
+        switch response.actionIdentifier {
+        case UNNotificationDefaultActionIdentifier, Ghostty.userNotificationActionShow:
+            guard let windowID = userInfo["worktreeWindow"] as? Int else { return true }
+            _ = TerminalController.showWorktreeTab(windowID: windowID, tabID: tabID)
+        case UNNotificationDismissActionIdentifier:
+            break
+        default:
+            break
+        }
+
+        UNUserNotificationCenter.current()
+            .removeDeliveredNotifications(withIdentifiers: [response.notification.request.identifier])
+        return true
     }
 
     // MARK: - GhosttyAppDelegate
@@ -1307,7 +1339,7 @@ extension AppDelegate {
         if controllersNeedConfirmation.count == 1 {
             Task {
                 let response = await controllersNeedConfirmation[0].confirmCloseAsync(
-                    messageText: "Quit Ghostty?",
+                    messageText: "Quit Ghostty++?",
                     informativeText: "The terminal still has a running process. If you quit, the process will be killed.",
                     confirmButtonTitle: "Terminate",
                 )
@@ -1345,7 +1377,7 @@ extension AppDelegate {
         Task {
             for controller in controllers {
                 let response = await controller.confirmCloseAsync(
-                    messageText: "Quit Ghostty?",
+                    messageText: "Quit Ghostty++?",
                     informativeText: "The terminal still has a running process. If you quit, the process will be killed.",
                     confirmButtonTitle: "Terminate",
                 )

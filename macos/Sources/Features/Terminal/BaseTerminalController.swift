@@ -51,6 +51,25 @@ class BaseTerminalController: NSWindowController,
     /// Set if the terminal view should show the update overlay.
     @Published var updateOverlayIsVisible: Bool = false
 
+    /// Whether the worktree sidebar is shown. Defaults to false in the base
+    /// class. TerminalController flips its default to true in init.
+    @Published var sidebarVisible: Bool = false
+
+    /// Fractional width of the sidebar (0..1).
+    @Published var sidebarSplit: CGFloat = 0.22
+
+    /// Override in subclasses to opt in to the worktree sidebar.
+    var sidebarSupported: Bool { false }
+
+    /// Logical tabs for the currently selected worktree.
+    var activeWorktreeTabs: [WorktreeTerminalTab] { [] }
+
+    /// The selected logical tab for the currently selected worktree.
+    @Published private(set) var activeWorktreeTabID: UUID?
+
+    /// The selected worktree path for this terminal window.
+    @Published private(set) var activeWorktreePath: String?
+
     /// True when any surface in this controller currently has an active bell.
     @Published private(set) var bell: Bool = false
 
@@ -1496,6 +1515,24 @@ class BaseTerminalController: NSWindowController,
             self.focusFollowsMouse = config.focusFollowsMouse
             self.splitPreserveZoom = config.splitPreserveZoom
         }
+    }
+
+    func selectWorktree(path: String) -> Bool {
+        false
+    }
+
+    func openWorktreeTab(path: String, title: String, initialInput: String?) {}
+
+    func selectWorktreeTab(id: UUID) {}
+}
+
+extension BaseTerminalController {
+    func setActiveWorktreePath(_ path: String?) {
+        activeWorktreePath = path
+    }
+
+    func setActiveWorktreeTabID(_ id: UUID?) {
+        activeWorktreeTabID = id
     }
 }
 
