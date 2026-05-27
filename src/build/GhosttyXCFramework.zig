@@ -15,43 +15,51 @@ pub fn init(
     deps: *const SharedDeps,
     target: Target,
 ) !GhosttyXCFramework {
-    // Universal macOS build
-    const macos_universal = try GhosttyLib.initMacOSUniversal(b, deps);
-
     // Native macOS build
-    const macos_native = try GhosttyLib.initStatic(b, &try deps.retarget(
-        b,
-        Config.genericMacOSTarget(b, null),
-    ));
+    const macos_native = switch (target) {
+        .native => try GhosttyLib.initStatic(b, &try deps.retarget(
+            b,
+            Config.genericMacOSTarget(b, null),
+        )),
+        .universal => null,
+    };
 
-    // iOS
-    const ios = try GhosttyLib.initStatic(b, &try deps.retarget(
-        b,
-        b.resolveTargetQuery(.{
-            .cpu_arch = .aarch64,
-            .os_tag = .ios,
-            .os_version_min = Config.osVersionMin(.ios),
-            .abi = null,
-        }),
-    ));
+    const universal = switch (target) {
+        .native => null,
+        .universal => .{
+            // Universal macOS build
+            .macos = try GhosttyLib.initMacOSUniversal(b, deps),
 
-    // iOS Simulator
-    const ios_sim = try GhosttyLib.initStatic(b, &try deps.retarget(
-        b,
-        b.resolveTargetQuery(.{
-            .cpu_arch = .aarch64,
-            .os_tag = .ios,
-            .os_version_min = Config.osVersionMin(.ios),
-            .abi = .simulator,
+            // iOS
+            .ios = try GhosttyLib.initStatic(b, &try deps.retarget(
+                b,
+                b.resolveTargetQuery(.{
+                    .cpu_arch = .aarch64,
+                    .os_tag = .ios,
+                    .os_version_min = Config.osVersionMin(.ios),
+                    .abi = null,
+                }),
+            )),
 
-            // We force the Apple CPU model because the simulator
-            // doesn't support the generic CPU model as of Zig 0.14 due
-            // to missing "altnzcv" instructions, which is false. This
-            // surely can't be right but we can fix this if/when we get
-            // back to running simulator builds.
-            .cpu_model = .{ .explicit = &std.Target.aarch64.cpu.apple_a17 },
-        }),
-    ));
+            // iOS Simulator
+            .ios_sim = try GhosttyLib.initStatic(b, &try deps.retarget(
+                b,
+                b.resolveTargetQuery(.{
+                    .cpu_arch = .aarch64,
+                    .os_tag = .ios,
+                    .os_version_min = Config.osVersionMin(.ios),
+                    .abi = .simulator,
+
+                    // We force the Apple CPU model because the simulator
+                    // doesn't support the generic CPU model as of Zig 0.14 due
+                    // to missing "altnzcv" instructions, which is false. This
+                    // surely can't be right but we can fix this if/when we get
+                    // back to running simulator builds.
+                    .cpu_model = .{ .explicit = &std.Target.aarch64.cpu.apple_a17 },
+                }),
+            )),
+        },
+    };
 
     // Generate a headers directory with only ghostty.h and the module
     // map. We can't use include/ directly because it also contains the
@@ -71,26 +79,26 @@ pub fn init(
         .libraries = switch (target) {
             .universal => &.{
                 .{
-                    .library = macos_universal.output,
+                    .library = universal.?.macos.output,
                     .headers = headers,
-                    .dsym = macos_universal.dsym,
+                    .dsym = universal.?.macos.dsym,
                 },
                 .{
-                    .library = ios.output,
+                    .library = universal.?.ios.output,
                     .headers = headers,
-                    .dsym = ios.dsym,
+                    .dsym = universal.?.ios.dsym,
                 },
                 .{
-                    .library = ios_sim.output,
+                    .library = universal.?.ios_sim.output,
                     .headers = headers,
-                    .dsym = ios_sim.dsym,
+                    .dsym = universal.?.ios_sim.dsym,
                 },
             },
 
             .native => &.{.{
-                .library = macos_native.output,
+                .library = macos_native.?.output,
                 .headers = headers,
-                .dsym = macos_native.dsym,
+                .dsym = macos_native.?.dsym,
             }},
         },
     });
