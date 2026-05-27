@@ -294,6 +294,7 @@ struct TerminalView<ViewModel: TerminalViewModel>: View {
 
             if viewModel.updateOverlayIsVisible {
                 UpdateOverlay()
+                    .zIndex(2)
             }
         }
         .frame(maxWidth: .greatestFiniteMagnitude, maxHeight: .greatestFiniteMagnitude)
@@ -344,6 +345,7 @@ struct TerminalView<ViewModel: TerminalViewModel>: View {
             // Show update information above all else.
             if viewModel.updateOverlayIsVisible {
                 UpdateOverlay()
+                    .zIndex(2)
             }
         }
         .frame(maxWidth: .greatestFiniteMagnitude, maxHeight: .greatestFiniteMagnitude)
