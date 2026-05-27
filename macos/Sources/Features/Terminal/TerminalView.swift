@@ -63,6 +63,9 @@ protocol TerminalViewModel: ObservableObject {
 
     /// Selects a logical tab in the currently selected worktree.
     func selectWorktreeTab(id: UUID)
+
+    /// Renames a logical tab in the currently selected worktree.
+    func renameWorktreeTab(id: UUID, title: String)
 }
 
 extension TerminalViewModel {
@@ -75,6 +78,8 @@ extension TerminalViewModel {
         set { _ = newValue }
     }
     var sidebarSupported: Bool { false }
+
+    func renameWorktreeTab(id: UUID, title: String) {}
 }
 
 struct WorktreeTerminalTab: Identifiable {
@@ -204,6 +209,9 @@ struct TerminalView<ViewModel: TerminalViewModel>: View {
                             title: "terminal",
                             initialInput: nil
                         )
+                    },
+                    rename: { id, title in
+                        viewModel.renameWorktreeTab(id: id, title: title)
                     }
                 )
                 Divider()
@@ -351,6 +359,11 @@ private struct WorktreeTabBar: View {
     let openCodex: () -> Void
     let openClaude: () -> Void
     let openTerminal: () -> Void
+    let rename: (UUID, String) -> Void
+
+    @State private var editingTabID: UUID?
+    @State private var editingTitle: String = ""
+    @FocusState private var focusedEditingTabID: UUID?
 
     var body: some View {
         HStack(spacing: 10) {
@@ -395,48 +408,118 @@ private struct WorktreeTabBar: View {
                         .frame(height: 1)
                 }
         }
+        .onChange(of: selectedID) { _ in
+            commitEditing()
+        }
     }
 
+    @ViewBuilder
     private func tabButton(_ tab: WorktreeTerminalTab) -> some View {
         let isSelected = tab.id == selectedID
 
-        return Button {
-            select(tab.id)
-        } label: {
-            HStack(spacing: 6) {
-                Image(systemName: iconName(for: tab.title))
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(isSelected ? Color.accentColor : Color.secondary)
-                Text(tab.title)
-                    .font(.system(size: 12, weight: isSelected ? .semibold : .medium))
-                    .lineLimit(1)
+        if editingTabID == tab.id {
+            tabContents(tab, isSelected: isSelected)
+                .padding(.horizontal, 11)
+                .padding(.vertical, 6)
+                .foregroundStyle(isSelected ? Color.primary : Color.secondary)
+                .background { tabBackground(isSelected: isSelected) }
+                .overlay { tabBorder(isSelected: isSelected) }
+        } else {
+            Button {
+                select(tab.id)
+            } label: {
+                tabContents(tab, isSelected: isSelected)
+                    .padding(.horizontal, 11)
+                    .padding(.vertical, 6)
+                    .foregroundStyle(isSelected ? Color.primary : Color.secondary)
+                    .background { tabBackground(isSelected: isSelected) }
+                    .overlay { tabBorder(isSelected: isSelected) }
             }
-            .padding(.horizontal, 11)
-            .padding(.vertical, 6)
-            .foregroundStyle(isSelected ? Color.primary : Color.secondary)
-            .background {
-                RoundedRectangle(cornerRadius: 7)
-                    .fill(isSelected
-                          ? themeBackground.opacity(0.76)
-                          : Color.clear)
-                    .shadow(
-                        color: isSelected ? Color.black.opacity(0.06) : Color.clear,
-                        radius: 2,
-                        x: 0,
-                        y: 1
-                    )
-            }
-            .overlay {
-                RoundedRectangle(cornerRadius: 7)
-                    .stroke(
-                        isSelected
-                        ? dividerColor.opacity(0.58)
-                        : Color.clear,
-                        lineWidth: 1
-                    )
+            .buttonStyle(.plain)
+            .simultaneousGesture(TapGesture(count: 2).onEnded {
+                beginEditing(tab)
+            })
+            .contextMenu {
+                Button("Rename Tab...") {
+                    beginEditing(tab)
+                }
             }
         }
-        .buttonStyle(.plain)
+    }
+
+    private func tabContents(_ tab: WorktreeTerminalTab, isSelected: Bool) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: iconName(for: tab.title))
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(isSelected ? Color.accentColor : Color.secondary)
+            tabTitle(tab, isSelected: isSelected)
+        }
+    }
+
+    @ViewBuilder
+    private func tabTitle(_ tab: WorktreeTerminalTab, isSelected: Bool) -> some View {
+        if editingTabID == tab.id {
+            TextField("", text: $editingTitle)
+                .textFieldStyle(.plain)
+                .font(.system(size: 12, weight: isSelected ? .semibold : .medium))
+                .lineLimit(1)
+                .frame(minWidth: 44, maxWidth: 140)
+                .focused($focusedEditingTabID, equals: tab.id)
+                .onSubmit { commitEditing() }
+                .onExitCommand { cancelEditing() }
+                .onDisappear { commitEditing() }
+                .onAppear { focusedEditingTabID = tab.id }
+        } else {
+            Text(tab.title)
+                .font(.system(size: 12, weight: isSelected ? .semibold : .medium))
+                .lineLimit(1)
+        }
+    }
+
+    private func beginEditing(_ tab: WorktreeTerminalTab) {
+        editingTabID = tab.id
+        editingTitle = tab.title
+        focusedEditingTabID = tab.id
+    }
+
+    private func commitEditing() {
+        guard let editingTabID else { return }
+        let title = editingTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !title.isEmpty {
+            rename(editingTabID, title)
+        }
+        self.editingTabID = nil
+        editingTitle = ""
+        focusedEditingTabID = nil
+    }
+
+    private func cancelEditing() {
+        editingTabID = nil
+        editingTitle = ""
+        focusedEditingTabID = nil
+    }
+
+    private func tabBackground(isSelected: Bool) -> some View {
+        RoundedRectangle(cornerRadius: 7)
+            .fill(isSelected
+                  ? themeBackground.opacity(0.76)
+                  : Color.clear)
+            .shadow(
+                color: isSelected ? Color.black.opacity(0.06) : Color.clear,
+                radius: 2,
+                x: 0,
+                y: 1
+            )
+    }
+
+    private func tabBorder(isSelected: Bool) -> some View {
+        RoundedRectangle(cornerRadius: 7)
+            .stroke(
+                isSelected
+                ? dividerColor.opacity(0.58)
+                : Color.clear,
+                lineWidth: 1
+            )
     }
 
     private func actionButton(

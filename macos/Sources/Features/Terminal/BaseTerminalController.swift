@@ -1524,6 +1524,8 @@ class BaseTerminalController: NSWindowController,
     func openWorktreeTab(path: String, title: String, initialInput: String?) {}
 
     func selectWorktreeTab(id: UUID) {}
+
+    func renameWorktreeTab(id: UUID, title: String) {}
 }
 
 extension BaseTerminalController {

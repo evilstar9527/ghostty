@@ -101,18 +101,18 @@ enum WorktreeService {
         return .init()
     }
 
-    /// `git -C <root> branch --format=%(refname:short)` plus tags via `git tag`.
+    /// `git -C <root> for-each-ref --format=%(refname:short)` for branches.
     /// Used to populate the "base ref" dropdown in the New Worktree sheet.
     static func refs(in repoRoot: String) throws -> [String] {
         let (branches, _, _) = try runGit(
             ["-C", repoRoot, "for-each-ref",
              "--format=%(refname:short)",
-             "refs/heads/", "refs/remotes/", "refs/tags/"]
+             "refs/heads/", "refs/remotes/"]
         )
         return branches
             .split(separator: "\n")
             .map { String($0).trimmingCharacters(in: .whitespaces) }
-            .filter { !$0.isEmpty }
+            .filter { !$0.isEmpty && !$0.hasSuffix("/HEAD") }
     }
 
     // MARK: - Internal
