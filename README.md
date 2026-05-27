@@ -2,18 +2,16 @@
 <h1>
 <p align="center">
   <img src="https://github.com/user-attachments/assets/fe853809-ba8b-400b-83ab-a9a0da25be8a" alt="Logo" width="128">
-  <br>Ghostty
+  <br>Ghostty++
 </h1>
   <p align="center">
-    Fast, native, feature-rich terminal emulator pushing modern features.
+    A modified Ghostty build with worktree-first project management and AI agent sessions.
     <br />
-    A native GUI or embeddable library via <code>libghostty</code>.
+    Built on Ghostty's fast, native terminal core.
     <br />
-    <a href="#about">About</a>
+    <a href="#ghostty">Ghostty++</a>
     ·
-    <a href="https://ghostty.org/download">Download</a>
-    ·
-    <a href="https://ghostty.org/docs">Documentation</a>
+    <a href="#upstream-ghostty">Upstream Ghostty</a>
     ·
     <a href="CONTRIBUTING.md">Contributing</a>
     ·
@@ -21,7 +19,34 @@
   </p>
 </p>
 
-## About
+## Ghostty++
+
+Ghostty++ is a personal, worktree-oriented build of Ghostty. It keeps the
+native Ghostty terminal experience, then adds a sidebar for managing project
+workspaces and launching AI agents directly inside the selected worktree.
+
+![Ghostty++ worktree sidebar and agent tabs](images/ghostty-plus-plus-worktree.png)
+
+### New Features
+
+- Worktree sidebar grouped by project, with only explicitly created workspaces
+  shown.
+- One-click workspace creation under the current project's `.worktree/`
+  directory.
+- Editable workspace names, separate from Git branch names and filesystem
+  paths.
+- Workspace deletion with an optional checkbox to delete the associated local
+  branch.
+- Worktree-scoped logical tabs: switching workspace switches its tab set too.
+- Quick-launch buttons for `codex`, `claude`, and a normal terminal tab in the
+  active workspace.
+- AI agent launch commands default to YOLO-style permissions:
+  `codex --dangerously-bypass-approvals-and-sandbox` and
+  `claude --dangerously-skip-permissions`.
+- macOS notifications when AI agent sessions finish; clicking a notification
+  jumps back to the corresponding workspace session.
+
+## Upstream Ghostty
 
 Ghostty is a terminal emulator that differentiates itself by being
 fast, feature-rich, and native. While there are many excellent terminal
