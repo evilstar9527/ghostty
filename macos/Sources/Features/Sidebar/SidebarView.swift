@@ -8,6 +8,7 @@ struct WorktreeSidebarView: View {
 
     /// Invoked with the absolute path of a worktree to open in a new tab.
     var openWorktree: (String, String?) -> Void
+    var toggleSidebar: () -> Void
 
     @State private var showingProjectSheet: Bool = false
     @State private var newWorktreeFor: SidebarProject?
@@ -47,6 +48,12 @@ struct WorktreeSidebarView: View {
 
     private var header: some View {
         HStack(spacing: 6) {
+            Button(action: toggleSidebar) {
+                Image(systemName: "sidebar.leading")
+            }
+            .buttonStyle(.borderless)
+            .help("Hide sidebar (⌘B)")
+
             Text("Worktrees")
                 .font(.system(size: 13, weight: .semibold))
             Spacer()

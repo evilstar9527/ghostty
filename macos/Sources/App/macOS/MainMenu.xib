@@ -365,8 +365,8 @@
                                 </connections>
                             </menuItem>
                             <menuItem isSeparatorItem="YES" id="bC9-n9-RbJ"/>
-                            <menuItem title="Toggle Worktree Sidebar" keyEquivalent="s" id="WTS-01-Sb1">
-                                <modifierMask key="keyEquivalentModifierMask" control="YES" command="YES"/>
+                            <menuItem title="Toggle Worktree Sidebar" keyEquivalent="b" id="WTS-01-Sb1">
+                                <modifierMask key="keyEquivalentModifierMask" command="YES"/>
                                 <connections>
                                     <action selector="toggleWorktreeSidebar:" target="-1" id="WTS-02-Sb1"/>
                                 </connections>

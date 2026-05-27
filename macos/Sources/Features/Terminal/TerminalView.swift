@@ -131,7 +131,8 @@ struct TerminalView<ViewModel: TerminalViewModel>: View {
                         WorktreeSidebarView(
                             openWorktree: { path, initialInput in
                                 openWorktreeInNewTab(at: path, initialInput: initialInput)
-                            }
+                            },
+                            toggleSidebar: { viewModel.sidebarVisible.toggle() }
                         )
                         .frame(minWidth: 200)
                     },
@@ -146,7 +147,7 @@ struct TerminalView<ViewModel: TerminalViewModel>: View {
                     }
                 }
             } else {
-                readyBody
+                terminalAreaWithSidebarToggle
             }
         }
     }
@@ -213,6 +214,33 @@ struct TerminalView<ViewModel: TerminalViewModel>: View {
             } else {
                 readyBody
             }
+        }
+    }
+
+    private var terminalAreaWithSidebarToggle: some View {
+        ZStack(alignment: .topLeading) {
+            terminalArea
+
+            Button {
+                viewModel.sidebarVisible.toggle()
+            } label: {
+                Image(systemName: "sidebar.leading")
+                    .font(.system(size: 13, weight: .semibold))
+                    .frame(width: 28, height: 26)
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(Color.secondary)
+            .background {
+                RoundedRectangle(cornerRadius: 6)
+                    .fill(ghostty.config.backgroundColor.opacity(0.86))
+            }
+            .overlay {
+                RoundedRectangle(cornerRadius: 6)
+                    .stroke(ghostty.config.splitDividerColor.opacity(0.45), lineWidth: 1)
+            }
+            .padding(.leading, 8)
+            .padding(.top, 6)
+            .help("Show sidebar (⌘B)")
         }
     }
 
