@@ -1,6 +1,6 @@
 import AppKit
 
-class DockTilePlugin: NSObject, @MainActor NSDockTilePlugIn {
+class DockTilePlugin: NSObject, @preconcurrency NSDockTilePlugIn {
     // WARNING: An instance of this class is alive as long as Ghostty's icon is
     // in the doc (running or not!), so keep any state and processing to a
     // minimum to respect resource usage.
