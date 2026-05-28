@@ -16,7 +16,7 @@ concurrency:
 jobs:
   release:
     name: Build and publish Ghostty++
-    runs-on: macos-latest
+    runs-on: macos-26
     environment: develop
     timeout-minutes: 120
     env:
