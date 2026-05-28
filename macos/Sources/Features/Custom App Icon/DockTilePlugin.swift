@@ -1,6 +1,6 @@
 import AppKit
 
-class DockTilePlugin: NSObject, NSDockTilePlugIn {
+class DockTilePlugin: NSObject, @MainActor NSDockTilePlugIn {
     // WARNING: An instance of this class is alive as long as Ghostty's icon is
     // in the doc (running or not!), so keep any state and processing to a
     // minimum to respect resource usage.
@@ -18,6 +18,7 @@ class DockTilePlugin: NSObject, NSDockTilePlugIn {
     private var iconChangeObserver: Any?
 
     /// The primary NSDockTilePlugin function.
+    @MainActor
     func setDockTile(_ dockTile: NSDockTile?) {
         // If no dock tile or no access to Ghostty defaults, we can't do anything.
         guard let dockTile, let ghosttyUserDefaults else {
@@ -38,6 +39,7 @@ class DockTilePlugin: NSObject, NSDockTilePlugIn {
             .sink { [weak self] newIcon in self?.iconDidChange(newIcon, dockTile: dockTile) }
     }
 
+    @MainActor
     private func iconDidChange(_ newIcon: AppIcon?, dockTile: NSDockTile) {
         guard let appIcon = newIcon?.image(in: pluginBundle) else {
             resetIcon(dockTile: dockTile)
@@ -48,6 +50,7 @@ class DockTilePlugin: NSObject, NSDockTilePlugIn {
     }
 
     /// Reset the application icon and dock tile icon to the default.
+    @MainActor
     private func resetIcon(dockTile: NSDockTile) {
         let appIcon: NSImage?
         if #available(macOS 26.0, *) {
@@ -67,6 +70,7 @@ class DockTilePlugin: NSObject, NSDockTilePlugIn {
 }
 
 private extension NSDockTile {
+    @MainActor
     func setIcon(_ newIcon: NSImage?) {
         guard let newIcon else {
             self.contentView = nil
