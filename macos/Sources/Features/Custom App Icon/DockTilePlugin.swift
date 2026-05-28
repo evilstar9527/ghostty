@@ -34,7 +34,7 @@ class DockTilePlugin: NSObject, NSDockTilePlugIn {
             .default()
             .publisher(for: .ghosttyIconDidChange)
             .map { [weak self] _ in self?.ghosttyUserDefaults?.appIcon }
-            .receive(on: DispatchQueue.global())
+            .receive(on: DispatchQueue.main)
             .sink { [weak self] newIcon in self?.iconDidChange(newIcon, dockTile: dockTile) }
     }
 
@@ -68,22 +68,16 @@ class DockTilePlugin: NSObject, NSDockTilePlugIn {
 
 private extension NSDockTile {
     func setIcon(_ newIcon: NSImage?) {
-        // Update the Dock tile on the main thread.
-        DispatchQueue.main.async {
-            guard let newIcon else {
-                self.contentView = nil
-                self.display()
-                return
-            }
-            let iconView = NSImageView(frame: CGRect(origin: .zero, size: self.size))
-            iconView.wantsLayer = true
-            iconView.image = newIcon
-            self.contentView = iconView
+        guard let newIcon else {
+            self.contentView = nil
             self.display()
+            return
         }
+
+        let iconView = NSImageView(frame: CGRect(origin: .zero, size: self.size))
+        iconView.wantsLayer = true
+        iconView.image = newIcon
+        self.contentView = iconView
+        self.display()
     }
 }
-
-// This is required because of the DispatchQueue call above. This doesn't
-// feel right but I don't know a better way to solve this.
-extension NSDockTile: @unchecked @retroactive Sendable {}
