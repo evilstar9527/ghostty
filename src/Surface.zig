@@ -5311,6 +5311,12 @@ pub fn performBindingAction(self: *Surface, action: input.Binding.Action) !bool 
             {},
         ),
 
+        .gstadd => return try self.rt_app.performAction(
+            .{ .surface = self },
+            .gstadd,
+            {},
+        ),
+
         .paste_from_clipboard => return try self.startClipboardRequest(
             .standard,
             .{ .paste = {} },

@@ -633,6 +633,12 @@ fn actionCommands(action: Action.Key) []const Command {
             .description = "Toggle the float on top state of the current window.",
         }},
 
+        .gstadd => comptime &.{.{
+            .action = .gstadd,
+            .title = "Add Current Git Project",
+            .description = "Add the current Git repository to the worktree sidebar.",
+        }},
+
         .toggle_secure_input => comptime &.{.{
             .action = .toggle_secure_input,
             .title = "Toggle Secure Input",
