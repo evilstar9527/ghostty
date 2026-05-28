@@ -12,6 +12,7 @@ final class SidebarViewModel: ObservableObject {
     @Published private(set) var worktrees: [UUID: [GitWorktree]] = [:]
     @Published private(set) var workspaceNames: [String: String] = [:]
     @Published private(set) var managedWorktreePaths: [UUID: Set<String>] = [:]
+    @Published private(set) var worktreeOrders: [UUID: [String]] = [:]
     @Published var expanded: Set<UUID> = []
     @Published var selectedWorktreePath: String?
     @Published private(set) var loading: Set<UUID> = []
@@ -20,6 +21,7 @@ final class SidebarViewModel: ObservableObject {
     private let projectsDefaultsKey = "sidebar.projects.v1"
     private let workspaceNamesDefaultsKey = "sidebar.workspaceNames.v1"
     private let managedWorktreePathsDefaultsKey = "sidebar.managedWorktreePaths.v1"
+    private let worktreeOrdersDefaultsKey = "sidebar.worktreeOrders.v1"
 
     private enum WorkspaceError: LocalizedError {
         case existingWorktreeNotFound(String)
@@ -44,11 +46,13 @@ final class SidebarViewModel: ObservableObject {
             projects = []
             loadWorkspaceNames()
             loadManagedWorktreePaths()
+            loadWorktreeOrders()
             return
         }
         projects = decoded
         loadWorkspaceNames()
         loadManagedWorktreePaths()
+        loadWorktreeOrders()
     }
 
     private func save() {
@@ -99,6 +103,33 @@ final class SidebarViewModel: ObservableObject {
         }
     }
 
+    private func loadWorktreeOrders() {
+        guard let data = UserDefaults.standard.data(forKey: worktreeOrdersDefaultsKey),
+              let decoded = try? JSONDecoder().decode([String: [String]].self, from: data) else {
+            worktreeOrders = [:]
+            return
+        }
+
+        worktreeOrders = Dictionary(
+            uniqueKeysWithValues: decoded.compactMap { key, paths in
+                guard let id = UUID(uuidString: key) else { return nil }
+                return (id, paths.map(normalizedPath))
+            }
+        )
+    }
+
+    private func saveWorktreeOrders() {
+        let encoded = Dictionary(
+            uniqueKeysWithValues: worktreeOrders.map { id, paths in
+                (id.uuidString, paths.map(normalizedPath))
+            }
+        )
+
+        if let data = try? JSONEncoder().encode(encoded) {
+            UserDefaults.standard.set(data, forKey: worktreeOrdersDefaultsKey)
+        }
+    }
+
     // MARK: - Project mutations
 
     func addProject(name: String, rootPath: String) {
@@ -109,19 +140,91 @@ final class SidebarViewModel: ObservableObject {
         save()
     }
 
+    func moveProjects(fromOffsets source: IndexSet, toOffset destination: Int) {
+        projects.move(fromOffsets: source, toOffset: destination)
+        save()
+    }
+
+    func moveProject(_ projectID: UUID, before targetID: UUID) {
+        guard projectID != targetID,
+              let sourceIndex = projects.firstIndex(where: { $0.id == projectID }) else {
+            return
+        }
+
+        let moving = projects.remove(at: sourceIndex)
+        guard let targetIndex = projects.firstIndex(where: { $0.id == targetID }) else {
+            projects.insert(moving, at: sourceIndex)
+            return
+        }
+
+        projects.insert(moving, at: targetIndex)
+        save()
+    }
+
+    func moveProject(_ projectID: UUID, toIndex destinationIndex: Int) {
+        guard let sourceIndex = projects.firstIndex(where: { $0.id == projectID }),
+              projects.indices.contains(destinationIndex),
+              sourceIndex != destinationIndex else {
+            return
+        }
+
+        let moving = projects.remove(at: sourceIndex)
+        let insertionIndex = min(max(destinationIndex, 0), projects.count)
+        projects.insert(moving, at: insertionIndex)
+        save()
+    }
+
+    func moveProjectToEnd(_ projectID: UUID) {
+        guard let sourceIndex = projects.firstIndex(where: { $0.id == projectID }),
+              sourceIndex != projects.index(before: projects.endIndex) else {
+            return
+        }
+
+        let moving = projects.remove(at: sourceIndex)
+        projects.append(moving)
+        save()
+    }
+
     func removeProject(_ project: SidebarProject) {
         projects.removeAll { $0.id == project.id }
         worktrees.removeValue(forKey: project.id)
         managedWorktreePaths.removeValue(forKey: project.id)
+        worktreeOrders.removeValue(forKey: project.id)
         expanded.remove(project.id)
         save()
         saveManagedWorktreePaths()
+        saveWorktreeOrders()
     }
 
     func updateProject(_ project: SidebarProject) {
         guard let idx = projects.firstIndex(where: { $0.id == project.id }) else { return }
         projects[idx] = project
         save()
+    }
+
+    func addCurrentGitProject(rootPath: String, name: String) {
+        let normalizedRoot = normalizedPath(rootPath)
+        let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let displayName = trimmedName.isEmpty
+            ? (normalizedRoot as NSString).lastPathComponent
+            : trimmedName
+
+        let project: SidebarProject
+        if let existing = projects.first(where: {
+            normalizedPath($0.rootPath) == normalizedRoot
+        }) {
+            project = existing
+        } else {
+            project = SidebarProject(name: displayName, rootPath: normalizedRoot)
+            projects.append(project)
+            save()
+        }
+
+        markManagedWorktree(path: normalizedRoot, projectID: project.id)
+        workspaceNames[normalizedRoot] = displayName
+        saveWorkspaceNames()
+        expanded.insert(project.id)
+        refresh(project)
     }
 
     // MARK: - Worktree refresh
@@ -167,6 +270,75 @@ final class SidebarViewModel: ObservableObject {
         for p in projects where expanded.contains(p.id) {
             refresh(p)
         }
+    }
+
+    func moveWorktrees(
+        in project: SidebarProject,
+        fromOffsets source: IndexSet,
+        toOffset destination: Int
+    ) {
+        guard var list = worktrees[project.id], !source.isEmpty else { return }
+        list.move(fromOffsets: source, toOffset: destination)
+        worktrees[project.id] = list
+        worktreeOrders[project.id] = list.map { normalizedPath($0.path) }
+        saveWorktreeOrders()
+    }
+
+    func moveWorktree(
+        path: String,
+        in project: SidebarProject,
+        before targetPath: String
+    ) {
+        let sourcePath = normalizedPath(path)
+        let destinationPath = normalizedPath(targetPath)
+        guard sourcePath != destinationPath,
+              var list = worktrees[project.id],
+              let sourceIndex = list.firstIndex(where: { normalizedPath($0.path) == sourcePath }) else {
+            return
+        }
+
+        let moving = list.remove(at: sourceIndex)
+        guard let targetIndex = list.firstIndex(where: { normalizedPath($0.path) == destinationPath }) else {
+            list.insert(moving, at: sourceIndex)
+            return
+        }
+
+        list.insert(moving, at: targetIndex)
+        worktrees[project.id] = list
+        worktreeOrders[project.id] = list.map { normalizedPath($0.path) }
+        saveWorktreeOrders()
+    }
+
+    func moveWorktree(path: String, in project: SidebarProject, toIndex destinationIndex: Int) {
+        let sourcePath = normalizedPath(path)
+        guard var list = worktrees[project.id],
+              let sourceIndex = list.firstIndex(where: { normalizedPath($0.path) == sourcePath }),
+              list.indices.contains(destinationIndex),
+              sourceIndex != destinationIndex else {
+            return
+        }
+
+        let moving = list.remove(at: sourceIndex)
+        let insertionIndex = min(max(destinationIndex, 0), list.count)
+        list.insert(moving, at: insertionIndex)
+        worktrees[project.id] = list
+        worktreeOrders[project.id] = list.map { normalizedPath($0.path) }
+        saveWorktreeOrders()
+    }
+
+    func moveWorktreeToEnd(path: String, in project: SidebarProject) {
+        let sourcePath = normalizedPath(path)
+        guard var list = worktrees[project.id],
+              let sourceIndex = list.firstIndex(where: { normalizedPath($0.path) == sourcePath }),
+              sourceIndex != list.index(before: list.endIndex) else {
+            return
+        }
+
+        let moving = list.remove(at: sourceIndex)
+        list.append(moving)
+        worktrees[project.id] = list
+        worktreeOrders[project.id] = list.map { normalizedPath($0.path) }
+        saveWorktreeOrders()
     }
 
     func selectWorktree(_ worktree: GitWorktree) {
@@ -290,6 +462,7 @@ final class SidebarViewModel: ObservableObject {
         if normalizedPath(worktree.path) == normalizedPath(project.rootPath) {
             unmarkManagedWorktree(path: worktree.path, projectID: project.id)
             workspaceNames.removeValue(forKey: normalizedPath(worktree.path))
+            removeWorktreeFromOrder(path: worktree.path, projectID: project.id)
             saveWorkspaceNames()
             if selectedWorktreePath == normalizedPath(worktree.path) {
                 selectedWorktreePath = nil
@@ -310,6 +483,7 @@ final class SidebarViewModel: ObservableObject {
             await MainActor.run {
                 self.unmarkManagedWorktree(path: worktree.path, projectID: project.id)
                 self.workspaceNames.removeValue(forKey: self.normalizedPath(worktree.path))
+                self.removeWorktreeFromOrder(path: worktree.path, projectID: project.id)
                 self.saveWorkspaceNames()
                 if self.selectedWorktreePath == self.normalizedPath(worktree.path) {
                     self.selectedWorktreePath = nil
@@ -331,7 +505,35 @@ final class SidebarViewModel: ObservableObject {
     private func visibleWorktrees(from list: [GitWorktree], for projectID: UUID) -> [GitWorktree] {
         let namedPaths = Set(workspaceNames.keys.map(normalizedPath))
         let managedPaths = managedWorktreePaths[projectID, default: []].union(namedPaths)
-        return list.filter { managedPaths.contains(normalizedPath($0.path)) }
+        return orderedWorktrees(
+            list.filter { managedPaths.contains(normalizedPath($0.path)) },
+            for: projectID
+        )
+    }
+
+    private func orderedWorktrees(_ list: [GitWorktree], for projectID: UUID) -> [GitWorktree] {
+        guard let order = worktreeOrders[projectID], !order.isEmpty else { return list }
+        let orderIndex = Dictionary(uniqueKeysWithValues: order.enumerated().map { idx, path in
+            (normalizedPath(path), idx)
+        })
+
+        return list.enumerated().sorted { left, right in
+            let leftPath = normalizedPath(left.element.path)
+            let rightPath = normalizedPath(right.element.path)
+            let leftOrder = orderIndex[leftPath]
+            let rightOrder = orderIndex[rightPath]
+
+            switch (leftOrder, rightOrder) {
+            case let (.some(leftOrder), .some(rightOrder)):
+                return leftOrder < rightOrder
+            case (.some, .none):
+                return true
+            case (.none, .some):
+                return false
+            case (.none, .none):
+                return left.offset < right.offset
+            }
+        }.map(\.element)
     }
 
     private func markManagedWorktree(path: String, projectID: UUID) {
@@ -350,5 +552,17 @@ final class SidebarViewModel: ObservableObject {
             managedWorktreePaths[projectID] = paths
         }
         saveManagedWorktreePaths()
+    }
+
+    private func removeWorktreeFromOrder(path: String, projectID: UUID) {
+        let target = normalizedPath(path)
+        guard var order = worktreeOrders[projectID] else { return }
+        order.removeAll { normalizedPath($0) == target }
+        if order.isEmpty {
+            worktreeOrders.removeValue(forKey: projectID)
+        } else {
+            worktreeOrders[projectID] = order
+        }
+        saveWorktreeOrders()
     }
 }

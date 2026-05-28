@@ -761,6 +761,11 @@ pub const Action = union(enum) {
     /// Only implemented on macOS.
     toggle_window_float_on_top,
 
+    /// Add the current Git repository to the worktree sidebar.
+    ///
+    /// Only implemented on macOS.
+    gstadd,
+
     /// Toggle secure input mode.
     ///
     /// This is used to prevent apps from monitoring your keyboard input
@@ -1394,6 +1399,7 @@ pub const Action = union(enum) {
             .toggle_fullscreen,
             .toggle_window_decorations,
             .toggle_window_float_on_top,
+            .gstadd,
             .toggle_secure_input,
             .toggle_mouse_reporting,
             .toggle_command_palette,
