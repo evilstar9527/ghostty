@@ -343,6 +343,9 @@ pub const Action = union(Key) {
     /// otherwise the terminal-set title.
     copy_title_to_clipboard,
 
+    /// Add the current Git repository to the worktree sidebar.
+    gstadd,
+
     /// Sync with: ghostty_action_tag_e
     pub const Key = enum(c_int) {
         quit,
@@ -410,6 +413,7 @@ pub const Action = union(Key) {
         search_selected,
         readonly,
         copy_title_to_clipboard,
+        gstadd,
 
         test "ghostty.h Action.Key" {
             try lib.checkGhosttyHEnum(Key, "GHOSTTY_ACTION_");

@@ -671,6 +671,8 @@ extension Ghostty {
                 return showChildExited(app, target: target, v: action.action.child_exited)
             case GHOSTTY_ACTION_COPY_TITLE_TO_CLIPBOARD:
                 return copyTitleToClipboard(app, target: target)
+            case GHOSTTY_ACTION_GSTADD:
+                return gstadd(app, target: target)
             default:
                 Ghostty.logger.warning("unknown action action=\(action.tag.rawValue)")
                 return false
@@ -1673,6 +1675,52 @@ extension Ghostty {
 
             default:
                 return false
+            }
+        }
+
+        private static func gstadd(
+            _ app: ghostty_app_t,
+            target: ghostty_target_s) -> Bool {
+            switch target.tag {
+            case GHOSTTY_TARGET_SURFACE:
+                guard let surface = target.target.surface else { return false }
+                guard let surfaceView = self.surfaceView(from: surface) else { return false }
+                guard let pwd = surfaceView.pwd, !pwd.isEmpty else { return false }
+                guard let root = gitRoot(containing: pwd) else {
+                    Ghostty.logger.warning("gstadd requested outside a Git repository path=\(pwd)")
+                    return false
+                }
+
+                Task { @MainActor in
+                    SidebarViewModel.shared.addCurrentGitProject(
+                        rootPath: root.path,
+                        name: root.lastPathComponent)
+                }
+                return true
+
+            default:
+                return false
+            }
+        }
+
+        private static func gitRoot(containing path: String) -> URL? {
+            let fileManager = FileManager.default
+            var url = URL(fileURLWithPath: path).standardizedFileURL
+
+            var isDirectory: ObjCBool = false
+            if fileManager.fileExists(atPath: url.path, isDirectory: &isDirectory), !isDirectory.boolValue {
+                url.deleteLastPathComponent()
+            }
+
+            while true {
+                let gitPath = url.appendingPathComponent(".git").path
+                if fileManager.fileExists(atPath: gitPath) {
+                    return url
+                }
+
+                let parent = url.deletingLastPathComponent()
+                if parent.path == url.path { return nil }
+                url = parent
             }
         }
 

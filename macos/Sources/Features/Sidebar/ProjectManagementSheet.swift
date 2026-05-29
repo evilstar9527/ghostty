@@ -11,8 +11,21 @@ struct ProjectManagementSheet: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Projects")
-                .font(.headline)
+            HStack {
+                Text("Projects")
+                    .font(.headline)
+                Spacer()
+                Button {
+                    dismiss()
+                } label: {
+                    Text("×")
+                        .font(.system(size: 20, weight: .regular))
+                        .frame(width: 24, height: 24)
+                }
+                .buttonStyle(.plain)
+                .help("Close")
+                .keyboardShortcut(.cancelAction)
+            }
 
             List {
                 ForEach(model.projects) { project in
@@ -47,17 +60,17 @@ struct ProjectManagementSheet: View {
                     .textFieldStyle(.roundedBorder)
                 Button("Browse…") { pickPath() }
                 Button("Add") { addProject() }
-                    .disabled(newName.isEmpty || newPath.isEmpty)
-            }
-
-            HStack {
-                Spacer()
-                Button("Done") { dismiss() }
-                    .keyboardShortcut(.defaultAction)
+                    .buttonStyle(.borderedProminent)
+                    .tint(.blue)
+                    .disabled(!canAddProject)
             }
         }
         .padding(16)
         .frame(minWidth: 540, minHeight: 340)
+    }
+
+    private var canAddProject: Bool {
+        !newName.isEmpty && !newPath.isEmpty
     }
 
     private func pickPath() {
