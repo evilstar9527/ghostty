@@ -18,8 +18,8 @@ struct ProjectManagementSheet: View {
                 Button {
                     dismiss()
                 } label: {
-                    Image(systemName: "xmark")
-                        .font(.system(size: 13, weight: .semibold))
+                    Text("×")
+                        .font(.system(size: 20, weight: .regular))
                         .frame(width: 24, height: 24)
                 }
                 .buttonStyle(.plain)
@@ -61,6 +61,7 @@ struct ProjectManagementSheet: View {
                 Button("Browse…") { pickPath() }
                 Button("Add") { addProject() }
                     .buttonStyle(.borderedProminent)
+                    .tint(.blue)
                     .disabled(!canAddProject)
             }
         }
