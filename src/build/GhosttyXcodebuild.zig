@@ -49,7 +49,9 @@ pub fn init(
     };
 
     const env = try std.process.getEnvMap(b.allocator);
-    const app_path = b.fmt("macos/build/{s}/Ghostty.app", .{xc_config});
+    // NOTE: The macOS app target's PRODUCT_NAME is "Ghostty++" in this fork,
+    // so the built bundle is "Ghostty++.app" rather than "Ghostty.app".
+    const app_path = b.fmt("macos/build/{s}/Ghostty++.app", .{xc_config});
 
     // Our step to build the Ghostty macOS app.
     const build = build: {

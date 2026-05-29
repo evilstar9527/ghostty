@@ -1569,6 +1569,15 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
     // MARK: First Responder
 
     @IBAction override func close(_ sender: Any) {
+        // If the active tab has splits, only close the focused split rather
+        // than the entire tab. This routes through the core close_surface flow
+        // which removes just the focused split (and falls back to closing the
+        // worktree tab once its last surface is gone).
+        if surfaceTree.isSplit {
+            super.close(sender)
+            return
+        }
+
         if closeActiveWorktreeTabWithConfirmation(
             messageText: "Close Tab?",
             informativeText: "The terminal still has a running process. If you close the tab the process will be killed."
