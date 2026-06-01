@@ -369,7 +369,7 @@ struct WorktreeSidebarView: View {
             ForEach(agentLaunchers) { launcher in
                 Button("Open \(launcher.title) in YOLO Mode") {
                     model.selectWorktree(wt)
-                    openWorktree(wt.path, "exec \(launcher.command)")
+                    openWorktree(wt.path, launcher.command)
                 }
             }
             Button("Copy Path") {

@@ -191,7 +191,7 @@ struct TerminalView<ViewModel: TerminalViewModel>: View {
                         viewModel.openWorktreeTab(
                             path: path,
                             title: "codex",
-                            initialInput: "exec codex --dangerously-bypass-approvals-and-sandbox"
+                            initialInput: "codex --dangerously-bypass-approvals-and-sandbox"
                         )
                     },
                     openClaude: {
@@ -199,7 +199,7 @@ struct TerminalView<ViewModel: TerminalViewModel>: View {
                         viewModel.openWorktreeTab(
                             path: path,
                             title: "claude",
-                            initialInput: "exec claude --dangerously-skip-permissions"
+                            initialInput: "claude --dangerously-skip-permissions"
                         )
                     },
                     openTerminal: {
